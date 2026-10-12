@@ -1,10 +1,10 @@
 # BiospexBatchCreator
 
 ## Purpose
-Handles the logic for creating export batches (e.g., for Zooniverse). It takes a large archive (ZIP or TAR.GZ), extracts it, and splits it into smaller, manageable batches based on a CSV manifest.
+Splits a large finished export archive (ZIP or TAR.GZ, for example a Zooniverse export) into smaller batch ZIPs that users can download one at a time, based on its CSV manifest.
 
 ## Workflow
-1. **Trigger**: Receives messages from SQS.
+1. **Trigger**: Receives messages from the SQS queue `{prefix}-batch-trigger`. BIOSPEX sends them from `App\Jobs\ZooniverseExportDownloadBatchJob` when a user asks to download an export in batches (`App\Http\Controllers\Admin\DownloadController`).
 2. **Extraction**: Downloads the source archive from S3 and extracts it to a local directory.
    - For very large archives, it uses Amazon EFS mount (`/efs/batch`) instead of `/tmp`.
 3. **Batching**: Parses the manifest CSV and groups rows into batches (default size: 2000).
@@ -12,7 +12,9 @@ Handles the logic for creating export batches (e.g., for Zooniverse). It takes a
    - A filtered `manifest.csv` containing only the rows for that batch.
    - The corresponding image files listed in the manifest.
 5. **Upload**: Saves each batch ZIP to the `batch/` directory in S3.
-6. **Callback**: Reports the list of created batch files and status back to Laravel via SQS.
+6. **Callback**: Reports the list of created batch files and status back to BIOSPEX via SQS (`updatesQueueUrl`, the `{prefix}-batch-update` queue), with `function` set to `BiospexBatchCreator`.
+
+This function is not part of the ZipBatchOrchestrator state machine, which builds export ZIPs; this one splits a finished export for download.
 
 ## Inputs/Outputs
 - **Inputs (JSON)**:
@@ -32,8 +34,9 @@ Handles the logic for creating export batches (e.g., for Zooniverse). It takes a
 - `MAX_TMP_SIZE`: Threshold in bytes to switch from `/tmp` to EFS (Default: `7516192768` / ~7GB).
 
 ## Related Components
-- **Laravel Command**: `App\Console\Commands\SqsListenerBatchUpdate` (Listens for `success` status and `batchFiles` list).
-- **Laravel Service**: `App\Services\Actor\Zooniverse\ZooniverseBatchTriggerService` (Typically triggers this process).
+- **Laravel Job**: `App\Jobs\ZooniverseExportDownloadBatchJob` (sends the trigger message and starts the batch listener).
+- **Laravel Command**: `App\Console\Commands\SqsListenerBatchUpdate` (`batch:listen`, receives the result).
+- **Laravel Job**: `App\Jobs\ZooniverseExportBatchResultJob` (emails the project owner download links for each batch, valid for 72 hours).
 
 ## Deployment
 Use the `deploy.sh` script for interactive deployment to AWS (Region: `us-east-2`).
